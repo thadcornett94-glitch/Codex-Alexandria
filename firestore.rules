@@ -1,0 +1,104 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ===============================================================
+    // Assumed Data Model
+    // ===============================================================
+    //
+    // Collection: userBooks
+    // Fields:
+    //   - uid: string (required, immutable)
+    //   - bookId: string (required, immutable)
+    //   - title: string (required)
+    //   - authors: list (optional)
+    //   - thumbnail: string (optional)
+    //   - status: string (required, enum: want-to-read, currently-reading, read)
+    //   - progress: number (optional, 0-100)
+    //   - currentPage: number (optional)
+    //   - lastReadAt: timestamp (optional)
+    //   - content: string (optional)
+    //
+    // Collection: readingLists
+    // Fields:
+    //   - uid: string (required, immutable)
+    //   - name: string (required, 1-50 chars)
+    //   - bookIds: list (optional)
+    //   - createdAt: timestamp (required)
+    //
+    // ===============================================================
+
+    // ===============================================================
+    // Helper Functions
+    // ===============================================================
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    function isDocOwner() {
+      return isAuthenticated() && request.auth.uid == resource.data.uid;
+    }
+
+    function hasRequiredFields(fields) {
+      return request.resource.data.keys().hasAll(fields);
+    }
+
+    function hasOnlyAllowedFields(fields) {
+      return request.resource.data.keys().hasOnly(fields);
+    }
+
+    function isValidStatus(status) {
+      return status in ['want-to-read', 'currently-reading', 'read'];
+    }
+
+    // ===============================================================
+    // Domain Validators
+    // ===============================================================
+
+    function isValidUserBook(data) {
+      return hasRequiredFields(['uid', 'bookId', 'title', 'status']) &&
+             data.uid == request.auth.uid &&
+             data.title is string && data.title.size() > 0 && data.title.size() < 200 &&
+             isValidStatus(data.status) &&
+             (!('progress' in data) || (data.progress is number && data.progress >= 0 && data.progress <= 100)) &&
+             (!('authors' in data) || data.authors is list);
+    }
+
+    function isValidReadingList(data) {
+      return hasRequiredFields(['uid', 'name', 'createdAt']) &&
+             data.uid == request.auth.uid &&
+             data.name is string && data.name.size() > 0 && data.name.size() <= 50 &&
+             (!('bookIds' in data) || data.bookIds is list);
+    }
+
+    // ===============================================================
+    // Rules
+    // ===============================================================
+
+    match /userBooks/{userBookId} {
+      allow read: if isDocOwner();
+      allow create: if isAuthenticated() && isValidUserBook(request.resource.data);
+      allow update: if isDocOwner() && isValidUserBook(request.resource.data) &&
+                      request.resource.data.uid == resource.data.uid &&
+                      request.resource.data.bookId == resource.data.bookId;
+      allow delete: if isDocOwner();
+    }
+
+    match /readingLists/{listId} {
+      allow read: if isDocOwner();
+      allow create: if isAuthenticated() && isValidReadingList(request.resource.data);
+      allow update: if isDocOwner() && isValidReadingList(request.resource.data) &&
+                      request.resource.data.uid == resource.data.uid;
+      allow delete: if isDocOwner();
+    }
+
+    // Default deny
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

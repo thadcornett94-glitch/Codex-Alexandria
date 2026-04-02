@@ -1,0 +1,44 @@
+{
+  "entities": {
+    "UserBook": {
+      "title": "UserBook",
+      "description": "A book saved by a user with reading progress and status.",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "description": "The user ID who saved the book." },
+        "bookId": { "type": "string", "description": "The unique ID of the book (e.g., ISBN or Google Books ID)." },
+        "title": { "type": "string" },
+        "authors": { "type": "array", "items": { "type": "string" } },
+        "thumbnail": { "type": "string" },
+        "status": { "type": "string", "enum": ["want-to-read", "currently-reading", "read"] },
+        "progress": { "type": "number", "description": "Reading progress as a percentage (0-100)." },
+        "currentPage": { "type": "number" },
+        "lastReadAt": { "type": "string", "format": "date-time" },
+        "content": { "type": "string", "description": "Cached or sample content for reading." }
+      },
+      "required": ["uid", "bookId", "title", "status"]
+    },
+    "ReadingList": {
+      "title": "ReadingList",
+      "description": "A custom reading list created by a user.",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string" },
+        "name": { "type": "string" },
+        "bookIds": { "type": "array", "items": { "type": "string" } },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["uid", "name"]
+    }
+  },
+  "firestore": {
+    "/userBooks/{userBookId}": {
+      "schema": "UserBook",
+      "description": "Collection of books saved by users."
+    },
+    "/readingLists/{listId}": {
+      "schema": "ReadingList",
+      "description": "Collection of custom reading lists."
+    }
+  }
+}
