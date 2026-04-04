@@ -20,7 +20,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import { auth, signIn, logOut, db, OperationType, handleFirestoreError } from './firebase';
 import { useAuthState } from 'react-firebase-hooks/auth';
 import { collection, query, where, onSnapshot, addDoc, updateDoc, deleteDoc, doc, serverTimestamp } from 'firebase/firestore';
-import { searchBooks, generateSpeech } from './services/geminiService';
+import { searchBooks, generateSpeech, getRecommendations } from './services/geminiService';
 
 // --- Types ---
 interface Book {
@@ -37,7 +37,7 @@ interface Book {
 interface UserBook extends Book {
   docId: string;
   uid: string;
-  status: 'want-to-read' | 'currently-reading' | 'read';
+  status: 'to-read' | 'currently-reading' | 'read' | 'want-to-read';
   progress: number;
   currentPage: number;
   lastReadAt: any;
@@ -76,58 +76,222 @@ const Navbar = ({ user }: { user: any }) => (
   </nav>
 );
 
-const SearchSection = ({ onSelectBook }: { onSelectBook: (book: Book) => void }) => {
+const SearchSection = ({ onSelectBook, user, userBooks }: { onSelectBook: (book: Book) => void, user: any, userBooks: UserBook[] }) => {
   const [query, setQuery] = useState('');
+  const [author, setAuthor] = useState('');
+  const [genre, setGenre] = useState('');
+  const [dateRangeStart, setDateRangeStart] = useState('');
+  const [dateRangeEnd, setDateRangeEnd] = useState('');
+  const [keywords, setKeywords] = useState('');
+  const [showFilters, setShowFilters] = useState(false);
   const [results, setResults] = useState<Book[]>([]);
   const [loading, setLoading] = useState(false);
+  const [recommendations, setRecommendations] = useState<Book[]>([]);
+  const [loadingRecs, setLoadingRecs] = useState(false);
+  const [preferences, setPreferences] = useState('');
+  const [showPrefs, setShowPrefs] = useState(false);
+
+  useEffect(() => {
+    if (user && userBooks.length > 0) {
+      loadRecommendations();
+    }
+  }, [user, userBooks.length]);
+
+  const loadRecommendations = async () => {
+    setLoadingRecs(true);
+    const history = userBooks.map(b => `${b.title} (${b.genre})`);
+    const recs = await getRecommendations(history, preferences);
+    setRecommendations(recs);
+    setLoadingRecs(false);
+  };
 
   const handleSearch = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!query.trim()) return;
+    if (!query.trim() && !author.trim() && !genre.trim() && !keywords.trim()) return;
     setLoading(true);
-    const books = await searchBooks(query);
+    const books = await searchBooks(query, { author, genre, dateRangeStart, dateRangeEnd, keywords });
     setResults(books);
     setLoading(false);
   };
 
   return (
     <section className="max-w-4xl mx-auto p-6">
-      <form onSubmit={handleSearch} className="relative mb-8">
-        <input
-          type="text"
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-          placeholder="Search all books, authors, ISBN..."
-          className="input-codex w-full text-lg"
-        />
-        <SearchIcon className="absolute left-6 top-1/2 -translate-y-1/2 text-gray-500 w-5 h-5" />
-        <button type="submit" className="absolute right-3 top-1/2 -translate-y-1/2 btn-gold px-6 py-2 text-sm">
-          Search
-        </button>
+      <form onSubmit={handleSearch} className="relative mb-12">
+        <div className="flex flex-col gap-4">
+          <div className="relative">
+            <input
+              type="text"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="Search all books, authors, ISBN..."
+              className="input-codex w-full text-lg pr-32"
+            />
+            <SearchIcon className="absolute left-6 top-1/2 -translate-y-1/2 text-gray-500 w-5 h-5" />
+            <div className="absolute right-3 top-1/2 -translate-y-1/2 flex gap-2">
+              <button 
+                type="button" 
+                onClick={() => setShowFilters(!showFilters)}
+                className={`p-2 rounded-lg transition-colors ${showFilters ? 'bg-gold-accent/20 text-gold-accent' : 'text-gray-500 hover:bg-white/5'}`}
+                title="Advanced Filters"
+              >
+                <Plus className={`w-5 h-5 transition-transform ${showFilters ? 'rotate-45' : ''}`} />
+              </button>
+              <button type="submit" className="btn-gold px-6 py-2 text-sm">
+                Search
+              </button>
+            </div>
+          </div>
+
+          <AnimatePresence>
+            {showFilters && (
+              <motion.div
+                initial={{ height: 0, opacity: 0 }}
+                animate={{ height: 'auto', opacity: 1 }}
+                exit={{ height: 0, opacity: 0 }}
+                className="overflow-hidden"
+              >
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 p-6 card-codex mt-2">
+                  <div className="space-y-2">
+                    <label className="text-xs font-bold text-gray-500 uppercase tracking-widest">Author</label>
+                    <input 
+                      type="text" 
+                      value={author} 
+                      onChange={(e) => setAuthor(e.target.value)}
+                      placeholder="e.g. J.K. Rowling"
+                      className="input-codex w-full py-2 text-sm"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <label className="text-xs font-bold text-gray-500 uppercase tracking-widest">Genre</label>
+                    <input 
+                      type="text" 
+                      value={genre} 
+                      onChange={(e) => setGenre(e.target.value)}
+                      placeholder="e.g. Fantasy, Mystery"
+                      className="input-codex w-full py-2 text-sm"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <label className="text-xs font-bold text-gray-500 uppercase tracking-widest">Publication Year Range</label>
+                    <div className="flex items-center gap-2">
+                      <input 
+                        type="text" 
+                        value={dateRangeStart} 
+                        onChange={(e) => setDateRangeStart(e.target.value)}
+                        placeholder="From"
+                        className="input-codex w-full py-2 text-sm"
+                      />
+                      <span className="text-gray-500">-</span>
+                      <input 
+                        type="text" 
+                        value={dateRangeEnd} 
+                        onChange={(e) => setDateRangeEnd(e.target.value)}
+                        placeholder="To"
+                        className="input-codex w-full py-2 text-sm"
+                      />
+                    </div>
+                  </div>
+                  <div className="space-y-2">
+                    <label className="text-xs font-bold text-gray-500 uppercase tracking-widest">Keywords</label>
+                    <input 
+                      type="text" 
+                      value={keywords} 
+                      onChange={(e) => setKeywords(e.target.value)}
+                      placeholder="e.g. magic, dragon, detective"
+                      className="input-codex w-full py-2 text-sm"
+                    />
+                  </div>
+                </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
+        </div>
       </form>
 
       {loading ? (
         <div className="flex justify-center py-12">
           <Loader2 className="w-8 h-8 animate-spin text-gold-accent" />
         </div>
-      ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-          {results.map((book) => (
-            <motion.div
-              key={book.id}
-              initial={{ opacity: 0, scale: 0.95 }}
-              animate={{ opacity: 1, scale: 1 }}
-              className="card-codex p-4 flex gap-4 hover:bg-white/5 transition-colors cursor-pointer group"
-              onClick={() => onSelectBook(book)}
+      ) : results.length > 0 ? (
+        <div className="mb-16">
+          <h2 className="text-2xl font-serif font-bold mb-8 text-gold-accent">Search Results</h2>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            {results.map((book) => (
+              <motion.div
+                key={book.id}
+                initial={{ opacity: 0, scale: 0.95 }}
+                animate={{ opacity: 1, scale: 1 }}
+                className="card-codex p-4 flex gap-4 hover:bg-white/5 transition-colors cursor-pointer group"
+                onClick={() => onSelectBook(book)}
+              >
+                <img src={book.thumbnail || 'https://picsum.photos/seed/book/120/180'} alt={book.title} className="w-24 h-36 object-cover rounded-xl shadow-lg group-hover:scale-105 transition-transform" referrerPolicy="no-referrer" />
+                <div className="flex-1">
+                  <h3 className="font-serif font-bold text-lg leading-tight mb-1 group-hover:text-gold-accent transition-colors">{book.title}</h3>
+                  <p className="text-sm text-gray-400 mb-2 font-sans">{book.authors?.join(', ')}</p>
+                  <p className="text-xs text-gray-500 line-clamp-3 font-sans leading-relaxed">{book.description}</p>
+                </div>
+              </motion.div>
+            ))}
+          </div>
+        </div>
+      ) : null}
+
+      {/* Recommendations */}
+      {user && (
+        <div className="mt-12">
+          <div className="flex items-center justify-between mb-8">
+            <h2 className="text-2xl font-serif font-bold text-gold-accent">Recommended for You</h2>
+            <button 
+              onClick={() => setShowPrefs(!showPrefs)}
+              className="text-xs font-sans font-bold text-gray-500 hover:text-gold-accent transition-colors uppercase tracking-widest"
             >
-              <img src={book.thumbnail || 'https://picsum.photos/seed/book/120/180'} alt={book.title} className="w-24 h-36 object-cover rounded-xl shadow-lg group-hover:scale-105 transition-transform" referrerPolicy="no-referrer" />
-              <div className="flex-1">
-                <h3 className="font-serif font-bold text-lg leading-tight mb-1 group-hover:text-gold-accent transition-colors">{book.title}</h3>
-                <p className="text-sm text-gray-400 mb-2 font-sans">{book.authors?.join(', ')}</p>
-                <p className="text-xs text-gray-500 line-clamp-3 font-sans leading-relaxed">{book.description}</p>
-              </div>
-            </motion.div>
-          ))}
+              {showPrefs ? 'Close Preferences' : 'Set Preferences'}
+            </button>
+          </div>
+
+          <AnimatePresence>
+            {showPrefs && (
+              <motion.div 
+                initial={{ height: 0, opacity: 0 }}
+                animate={{ height: 'auto', opacity: 1 }}
+                exit={{ height: 0, opacity: 0 }}
+                className="overflow-hidden mb-8"
+              >
+                <div className="flex gap-4">
+                  <input 
+                    placeholder="Tell us what you like (e.g. 'Dark fantasy with strong female leads')" 
+                    className="input-codex flex-1 text-sm py-2" 
+                    value={preferences}
+                    onChange={e => setPreferences(e.target.value)}
+                  />
+                  <button onClick={loadRecommendations} className="btn-gold px-6 py-2 text-sm">Update</button>
+                </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
+
+          {loadingRecs ? (
+            <div className="flex justify-center py-12">
+              <Loader2 className="w-8 h-8 animate-spin text-gold-accent/50" />
+            </div>
+          ) : (
+            <div className="grid grid-cols-2 md:grid-cols-3 gap-6">
+              {recommendations.map((book) => (
+                <motion.div
+                  key={book.id}
+                  whileHover={{ y: -4 }}
+                  className="card-codex p-3 flex flex-col gap-3 hover:bg-white/5 transition-colors cursor-pointer group"
+                  onClick={() => onSelectBook(book)}
+                >
+                  <img src={book.thumbnail || 'https://picsum.photos/seed/book/120/180'} alt={book.title} className="w-full aspect-[2/3] object-cover rounded-xl shadow-lg group-hover:ring-1 group-hover:ring-gold-accent/30 transition-all" referrerPolicy="no-referrer" />
+                  <div>
+                    <h3 className="font-serif font-bold text-sm line-clamp-1 group-hover:text-gold-accent transition-colors">{book.title}</h3>
+                    <p className="text-[10px] text-gray-500 font-sans">{book.authors?.[0]}</p>
+                  </div>
+                </motion.div>
+              ))}
+            </div>
+          )}
         </div>
       )}
     </section>
@@ -204,7 +368,7 @@ const LibrarySection = ({ user, onReadBook }: { user: any, onReadBook: (book: Us
 
   const predefinedSections = [
     { title: 'Currently Reading', status: 'currently-reading' },
-    { title: 'Want to Read', status: 'want-to-read' },
+    { title: 'To Read', status: 'to-read' },
     { title: 'Read', status: 'read' },
   ];
 
@@ -329,7 +493,7 @@ const BookDetails = ({ book, user, onBack, onStartReading }: { book: Book | User
     return () => unsubscribe();
   }, [user]);
 
-  const handleSave = async (status: 'want-to-read' | 'currently-reading' | 'read') => {
+  const handleSave = async (status: 'to-read' | 'currently-reading' | 'read' | 'want-to-read') => {
     if (!user) return signIn();
     try {
       if (isSaved) {
@@ -354,7 +518,7 @@ const BookDetails = ({ book, user, onBack, onStartReading }: { book: Book | User
     
     // Ensure book is in library first
     if (!isSaved) {
-      await handleSave('want-to-read');
+      await handleSave('to-read');
     }
 
     const isInList = list.bookIds?.includes(book.id);
@@ -399,12 +563,12 @@ const BookDetails = ({ book, user, onBack, onStartReading }: { book: Book | User
               <div className="p-4 bg-white/5 rounded-xl border border-white/10">
                 <p className="text-xs text-gray-500 uppercase tracking-widest font-bold mb-3">Status</p>
                 <div className="flex flex-col gap-2">
-                  {(['want-to-read', 'currently-reading', 'read'] as const).map(s => (
+                  {(['to-read', 'currently-reading', 'read'] as const).map(s => (
                     <button
                       key={s}
                       onClick={() => handleSave(s)}
                       className={`text-left text-sm px-3 py-2 rounded-lg transition-colors ${
-                        isSaved && (book as UserBook).status === s 
+                        isSaved && ((book as UserBook).status === s || (s === 'to-read' && (book as UserBook).status === 'want-to-read'))
                           ? 'bg-gold-accent/20 text-gold-accent font-bold' 
                           : 'text-gray-400 hover:bg-white/5'
                       }`}
@@ -483,7 +647,7 @@ const BookReader = ({ book, user, onBack }: { book: UserBook | Book, user: any, 
 
   const isSaved = 'docId' in book;
 
-  const handleSave = async (status: 'want-to-read' | 'currently-reading' | 'read') => {
+  const handleSave = async (status: 'to-read' | 'currently-reading' | 'read' | 'want-to-read') => {
     if (!user) return signIn();
     try {
       if (isSaved) {
@@ -551,7 +715,7 @@ const BookReader = ({ book, user, onBack }: { book: UserBook | Book, user: any, 
         <div className="flex items-center gap-2">
           {!isSaved && (
             <button 
-              onClick={() => handleSave('want-to-read')}
+              onClick={() => handleSave('to-read')}
               className="p-2 text-gray-500 hover:text-gold-accent transition-colors"
               title="Add to Library"
             >
@@ -617,6 +781,17 @@ export default function App() {
   const [activeTab, setActiveTab] = useState<'search' | 'library'>('search');
   const [selectedBook, setSelectedBook] = useState<Book | UserBook | null>(null);
   const [viewMode, setViewMode] = useState<'details' | 'reading'>('details');
+  const [userBooks, setUserBooks] = useState<UserBook[]>([]);
+
+  useEffect(() => {
+    if (!user) return;
+    const q = query(collection(db, 'userBooks'), where('uid', '==', user.uid));
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      const b = snapshot.docs.map(doc => ({ ...doc.data(), docId: doc.id } as UserBook));
+      setUserBooks(b);
+    });
+    return () => unsubscribe();
+  }, [user]);
 
   const handleSelectBook = (book: Book | UserBook) => {
     setSelectedBook(book);
@@ -629,7 +804,7 @@ export default function App() {
       
       <main className="pb-24">
         {activeTab === 'search' ? (
-          <SearchSection onSelectBook={handleSelectBook} />
+          <SearchSection onSelectBook={handleSelectBook} user={user} userBooks={userBooks} />
         ) : (
           <LibrarySection user={user} onReadBook={handleSelectBook} />
         )}

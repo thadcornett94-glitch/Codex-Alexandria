@@ -52,7 +52,7 @@ service cloud.firestore {
     }
 
     function isValidStatus(status) {
-      return status in ['want-to-read', 'currently-reading', 'read'];
+      return status in ['to-read', 'currently-reading', 'read', 'want-to-read'];
     }
 
     // ===============================================================
